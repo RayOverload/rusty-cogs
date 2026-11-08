@@ -41,6 +41,6 @@ load cog
 
 # Contact⠀⚒
 ---
-➥ dm me - [`p1winter`](https://discordapp.com/users/727378306340487178) or `0eus` || you can open an issue [-here-](https://github.com/rusty-man/rusty-cogs/issues) aswell
+➥ dm me - [`dxctator`](https://discordapp.com/users/727378306340487178) || you can open an issue [-here-](https://github.com/rusty-man/rusty-cogs/issues) aswell
 <br/> <br/>
 ➥ ping me in [#support_othercogs](https://discord.com/channels/240154543684321280/240212783503900673) in the [Red - Cog Support](https://discord.gg/red-cog-support-240154543684321280) server
