@@ -1,106 +1,124 @@
 import discord
-from typing import Optional, Union, Literal
+from typing import Literal, Optional, Union
 from redbot.core import app_commands, commands, Config
 
 
 class Avatar(commands.Cog):
-    """Get a user's global/guild avatar in an embed, with settings to manage the embed."""
+    """Get a user's global/guild avatar or decoration in a clean embed."""
 
     def __init__(self):
         self.config = Config.get_conf(self, identifier=524188088840)
-        default_global = {"embed_color": None, "use_embed": True}
-        self.config.register_global(**default_global)
-
+        self.config.register_global(embed_color=None, use_embed=True)
 
     @commands.hybrid_command(name="avatar", usage="[user] [type]")
-    @app_commands.describe(user="The user you wish to retrieve the avatar of (optional)", type="Global avatar or guild avatar or avatar decoration (optional)")
+    @app_commands.describe(
+        user="The user whose avatar you want to retrieve (defaults to you)",
+        type="Which avatar asset to retrieve",
+    )
     @commands.guild_only()
-    async def avatar(self, ctx: commands.Context, user: Optional[Union[discord.Member, discord.User]], type: Optional[Literal["global", "guild", "deco"]]) -> None:
-        """Returns a user's avatar assets as an embed. (see help)
+    async def avatar(
+        self,
+        ctx: commands.Context,
+        user: Optional[Union[discord.Member, discord.User]] = None,
+        type: Literal["global", "guild", "deco"] = "global",
+    ) -> None:
+        """Return a user's global avatar, server avatar, or avatar decoration.
 
-        > optional - [user] = `@mention` / `username` / `id`
-        > optional - [type] = `global` / `guild` / `deco` (default=global)
+        Optional arguments:
+        - user: mention, username, or ID (defaults to you)
+        - type: global, guild, or deco (defaults to global)
         """
-
         user = user or ctx.author
-        embed_color = await self.config.embed_color() or user.color
-        use_embed = await self.config.use_embed()
+        asset_type = type.lower()
+        display_avatar = user.display_avatar
+        avatar_url = display_avatar.url
+        title = "Avatar"
 
-        if type is None:
-            avatar_url = user.display_avatar.url
-            type = "global"
-        elif type.lower() == "guild":
-            try:
-                avatar_url = user.guild_avatar.url if user.guild_avatar else user.display_avatar.url
-            except AttributeError:
-                await ctx.send("Cannot access guild avatar as user is not in this guild.")
+        if asset_type == "guild":
+            if not isinstance(user, discord.Member):
+                await ctx.send("Guild avatars are only available for members of this server.")
                 return
-        elif type.lower() == "deco":
-            avatar_url = user.avatar_decoration.url if user.avatar_decoration else user.display_avatar.url
-            default_url = user.display_avatar.url
-        else:
-            avatar_url = user.display_avatar.url
+            guild_avatar = user.guild_avatar
+            if guild_avatar is not None:
+                avatar_url = guild_avatar.url
+            title = "Server Avatar"
 
-        if use_embed:
-            title = "Decoration" if user.avatar_decoration and type.lower() == "deco" else "Avatar"
-            iconUrl = default_url if type.lower() == "deco" else avatar_url
-            embed = discord.Embed(color=embed_color, description=f"**[{title}]({avatar_url})**")
-            embed.set_author(name=f"{user.name} ~ {user.display_name}", icon_url=iconUrl)
-            embed.set_image(url=avatar_url)
-
-            if ctx.channel.permissions_for(ctx.guild.me).embed_links:
-                await ctx.send(embed=embed)
+        elif asset_type == "deco":
+            decoration = getattr(user, "avatar_decoration", None)
+            if decoration is not None:
+                avatar_url = decoration.url
+                title = "Avatar Decoration"
             else:
-                await ctx.send("I do not have permission to send embeds in this channel.")
-        else:
-            await ctx.send(avatar_url)
+                await ctx.send("This user doesn't have an avatar decoration.")
+                return
 
+        embed_color = await self.config.embed_color()
+        if embed_color is None:
+            embed_color = getattr(user, "color", discord.Color.default())
+
+        if not await self.config.use_embed():
+            await ctx.send(avatar_url)
+            return
+
+        embed = discord.Embed(
+            color=embed_color,
+            description=f"**[{title}]({avatar_url})**",
+        )
+        embed.set_author(
+            name=f"{user.name} · {getattr(user, 'display_name', user.name)}",
+            icon_url=display_avatar.url,
+        )
+        embed.set_image(url=avatar_url)
+        embed.set_footer(text=f"Rusty-Cogs · {asset_type.title()}")
+
+        bot_member = ctx.guild.me
+        if bot_member is None or not ctx.channel.permissions_for(bot_member).embed_links:
+            await ctx.send("I need the **Embed Links** permission to display this avatar.")
+            return
+
+        await ctx.send(embed=embed)
 
     @commands.group(name="avatar_embed")
     @commands.is_owner()
     @commands.guild_only()
     async def avatar_embed(self, ctx: commands.Context) -> None:
-        """Avatar embed settings for bot owner.
-        
-        > With this, you have the ability to change embed color or disable the embed altogether.
-        """
-        return
-
+        """Customize the avatar embed or send the image as a plain link."""
 
     @avatar_embed.command(name="color")
     @commands.is_owner()
     @commands.guild_only()
     async def avatar_embed_color(self, ctx: commands.Context, color: str) -> None:
-        """Set embed color for avatar (defaults to role color)
-
-        > Use a hex color code or 'clear' to reset to the default color.
-        """
-
+        """Set the embed color with a HEX value, or use 'clear' for the default."""
         if color.lower() == "clear":
             await self.config.embed_color.set(None)
-            await ctx.send("Embed color has been reset to default.")
-        else:
-            try:
-                # Only accept hex (and `clear`)
-                embed_color = discord.Color(int(color.lstrip("#"), 16))
-                await self.config.embed_color.set(embed_color.value)
-                await ctx.send(f"Embed color has been set to {color}.")
-            except ValueError:
-                await ctx.send("Invalid hex color code. Please provide a valid hex color code or 'clear'.")
+            await ctx.send("Embed color reset to the default.")
+            return
 
+        raw = color.strip().lstrip("#")
+        if len(raw) not in (3, 6):
+            await ctx.send("Invalid HEX color. Use 3 or 6 hexadecimal digits, or 'clear'.")
+            return
+
+        try:
+            value = int(raw, 16)
+            if len(raw) == 3:
+                value = int("".join(char * 2 for char in raw), 16)
+        except ValueError:
+            await ctx.send("Invalid HEX color. Use 3 or 6 hexadecimal digits, or 'clear'.")
+            return
+
+        await self.config.embed_color.set(value)
+        await ctx.send(f"Avatar embed color set to **#{value:06X}**.")
 
     @avatar_embed.command(name="show")
-    @commands.guild_only()
     @commands.is_owner()
+    @commands.guild_only()
     async def avatar_embed_show(self, ctx: commands.Context, show: bool) -> None:
-        """Enable or disable avatar embed.
-
-        > Use `true` to enable embed or `false` to disable embed.
-        """
-
+        """Enable or disable the avatar embed."""
         await self.config.use_embed.set(show)
-        await ctx.send(f"Avatar embed has been {'enabled' if show else 'disabled'}.")
-
+        state = "enabled" if show else "disabled"
+        await ctx.send(f"Avatar embeds {state}.")
 
     async def red_delete_data_for_user(self, **kwargs) -> None:
-        pass
+        """This cog does not store user-specific data."""
+        return
